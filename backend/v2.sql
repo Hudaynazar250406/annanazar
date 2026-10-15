@@ -8,3 +8,6 @@ CREATE TABLE IF NOT EXISTS wishes (id SERIAL PRIMARY KEY, user_id INT NOT NULL R
 CREATE TABLE IF NOT EXISTS letters (id SERIAL PRIMARY KEY, user_id INT NOT NULL REFERENCES users(id), recipient_id INT NOT NULL REFERENCES users(id), title TEXT NOT NULL, body TEXT NOT NULL, opens_at TIMESTAMPTZ NOT NULL);
 CREATE TABLE IF NOT EXISTS letter_hidden (letter_id INT REFERENCES letters(id) ON DELETE CASCADE, user_id INT REFERENCES users(id), PRIMARY KEY(letter_id,user_id));
 CREATE TABLE IF NOT EXISTS reactions (target TEXT NOT NULL, target_id INT NOT NULL, user_id INT NOT NULL REFERENCES users(id), emoji TEXT NOT NULL, PRIMARY KEY(target,target_id,user_id));
+CREATE TABLE IF NOT EXISTS app_migrations (key TEXT PRIMARY KEY);
+DELETE FROM phrases WHERE NOT EXISTS (SELECT 1 FROM app_migrations WHERE key='flirt-phrases-v1');
+INSERT INTO app_migrations(key) VALUES('flirt-phrases-v1') ON CONFLICT DO NOTHING;
