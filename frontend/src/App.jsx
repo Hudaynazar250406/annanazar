@@ -1,266 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
-import { API, api, getToken, setToken } from './api'
-
-const T = {
-  ru: {
-    forYou: 'Для Анны ♥',
-    enter: 'Войти',
-    login: 'Логин',
-    password: 'Пароль',
-    signin: 'Открыть наш мир',
-    chat: 'Чат',
-    photos: 'Наши фото',
-    write: 'Напиши что-нибудь тёплое…',
-    send: 'Отправить',
-    add: '+ Добавить фото',
-    caption: 'Подпись (необязательно)',
-    empty: 'Здесь пока пусто — самое время добавить первое фото ♥',
-    logout: 'Выйти',
-    wrong: 'Неверный логин или пароль',
-    loading: 'Загружаем нежность…',
-  },
-  en: {
-    forYou: 'For Anna ♥',
-    enter: 'Enter',
-    login: 'Login',
-    password: 'Password',
-    signin: 'Open our world',
-    chat: 'Chat',
-    photos: 'Our photos',
-    write: 'Write something sweet…',
-    send: 'Send',
-    add: '+ Add photo',
-    caption: 'Caption (optional)',
-    empty: 'Nothing here yet — time to add the first photo ♥',
-    logout: 'Log out',
-    wrong: 'Wrong login or password',
-    loading: 'Loading tenderness…',
-  },
-}
-
-const FALLBACK = {
-  ru: 'Ты — моё любимое «сегодня» и самое тёплое «завтра».',
-  en: 'You are my favorite hello and my hardest goodbye.',
-}
-
-function Typewriter({ text }) {
-  const [n, setN] = useState(0)
-  useEffect(() => {
-    setN(0)
-    const i = setInterval(() => setN((x) => (x >= text.length ? (clearInterval(i), x) : x + 1)), 45)
-    return () => clearInterval(i)
-  }, [text])
-  return (
-    <span>
-      {text.slice(0, n)}
-      <i className="caret" />
-    </span>
-  )
-}
-
-function Hearts() {
-  return (
-    <div className="hearts" aria-hidden>
-      {Array.from({ length: 14 }).map((_, i) => (
-        <span key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i * 1.3) % 9}s`, fontSize: 14 + ((i * 7) % 22) }}>
-          {i % 3 ? '♥' : '✦'}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-function Welcome({ t, lang, onEnter }) {
-  const [phrase, setPhrase] = useState('')
-  useEffect(() => {
-    let alive = true
-    setPhrase('')
-    api('/api/phrase?lang=' + lang)
-      .then((d) => alive && setPhrase(d.text || FALLBACK[lang]))
-      .catch(() => alive && setPhrase(FALLBACK[lang]))
-    return () => {
-      alive = false
-    }
-  }, [lang])
-  return (
-    <main className="center">
-      <div className="card hero">
-        <p className="eyebrow">{t.forYou}</p>
-        <h1>Anna <em>&amp;</em> Nazar</h1>
-        <p className="phrase">{phrase ? <Typewriter text={phrase} /> : t.loading}</p>
-        <button className="btn" onClick={onEnter}>{t.enter}</button>
-      </div>
-    </main>
-  )
-}
-
-function Login({ t, onDone }) {
-  const [login, setLogin] = useState('')
-  const [password, setPassword] = useState('')
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
-  const submit = async (e) => {
-    e.preventDefault()
-    setBusy(true)
-    setErr('')
-    try {
-      const d = await api('/api/login', { method: 'POST', json: { login, password } })
-      setToken(d.token)
-      onDone()
-    } catch {
-      setErr(t.wrong)
-    }
-    setBusy(false)
-  }
-  return (
-    <main className="center">
-      <form className="card login" onSubmit={submit}>
-        <h2>Anna <em>&amp;</em> Nazar</h2>
-        <input placeholder={t.login} value={login} onChange={(e) => setLogin(e.target.value)} autoCapitalize="none" autoComplete="username" />
-        <input placeholder={t.password} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-        {err && <p className="err">{err}</p>}
-        <button className="btn" disabled={busy}>{t.signin}</button>
-      </form>
-    </main>
-  )
-}
-
-function Chat({ t, me }) {
-  const [msgs, setMsgs] = useState([])
-  const [text, setText] = useState('')
-  const ws = useRef(null)
-  const end = useRef(null)
-  useEffect(() => {
-    let closed = false
-    let timer
-    api('/api/messages').then(setMsgs).catch(() => {})
-    const connect = () => {
-      const s = new WebSocket(API.replace(/^http/, 'ws') + '/ws?token=' + getToken())
-      ws.current = s
-      s.onmessage = (e) => setMsgs((m) => [...m, JSON.parse(e.data)])
-      s.onclose = () => {
-        if (!closed) timer = setTimeout(connect, 2000)
-      }
-    }
-    connect()
-    return () => {
-      closed = true
-      clearTimeout(timer)
-      ws.current && ws.current.close()
-    }
-  }, [])
-  useEffect(() => end.current?.scrollIntoView({ behavior: 'smooth' }), [msgs])
-  const send = (e) => {
-    e.preventDefault()
-    if (!text.trim() || ws.current?.readyState !== 1) return
-    ws.current.send(JSON.stringify({ text }))
-    setText('')
-  }
-  return (
-    <section className="card chat">
-      <div className="msgs">
-        {msgs.map((m) => (
-          <div key={m.id} className={'bubble ' + (m.user_id === me.id ? 'mine' : 'theirs')}>
-            <small>{m.name} · {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
-            <p>{m.text}</p>
-          </div>
-        ))}
-        <div ref={end} />
-      </div>
-      <form className="composer" onSubmit={send}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={t.write} />
-        <button className="btn">{t.send}</button>
-      </form>
-    </section>
-  )
-}
-
-function Gallery({ t }) {
-  const [list, setList] = useState([])
-  const [open, setOpen] = useState(null)
-  const [caption, setCaption] = useState('')
-  const file = useRef(null)
-  const load = () => api('/api/photos').then(setList).catch(() => {})
-  useEffect(() => {
-    load()
-  }, [])
-  const url = (id, k) => `${API}/api/photos/${id}/${k}?token=${getToken()}`
-  const upload = async (e) => {
-    const f = e.target.files[0]
-    if (!f) return
-    const fd = new FormData()
-    fd.append('file', f)
-    fd.append('caption', caption)
-    await api('/api/photos', { method: 'POST', body: fd })
-    setCaption('')
-    e.target.value = ''
-    load()
-  }
-  return (
-    <section>
-      <div className="card uploader">
-        <input value={caption} onChange={(e) => setCaption(e.target.value)} placeholder={t.caption} />
-        <button className="btn" onClick={() => file.current.click()}>{t.add}</button>
-        <input ref={file} type="file" accept="image/*" hidden onChange={upload} />
-      </div>
-      {list.length === 0 && <p className="muted">{t.empty}</p>}
-      <div className="grid">
-        {list.map((p) => (
-          <figure key={p.id} className="tile" onClick={() => setOpen(p)}>
-            <img src={url(p.id, 'thumb')} loading="lazy" alt={p.caption} />
-            {p.caption && <figcaption>{p.caption}</figcaption>}
-          </figure>
-        ))}
-      </div>
-      {open && (
-        <div className="lightbox" onClick={() => setOpen(null)}>
-          <img src={url(open.id, 'full')} alt={open.caption} />
-          {open.caption && <p>{open.caption}</p>}
-        </div>
-      )}
-    </section>
-  )
-}
-
-export default function App() {
-  const [lang, setLang] = useState(localStorage.getItem('lang') || 'ru')
-  const [stage, setStage] = useState('welcome')
-  const [tab, setTab] = useState('chat')
-  const [me, setMe] = useState(null)
-  const t = T[lang]
-  useEffect(() => localStorage.setItem('lang', lang), [lang])
-  useEffect(() => {
-    if (getToken()) api('/api/me').then(setMe).catch(() => {})
-  }, [])
-  const enter = () => (me ? setStage('app') : setStage('login'))
-  const logged = async () => {
-    setMe(await api('/api/me'))
-    setStage('app')
-  }
-  const logout = () => {
-    setToken(null)
-    location.reload()
-  }
-  return (
-    <>
-      <div className="bg" />
-      <Hearts />
-      <button className="lang" onClick={() => setLang(lang === 'ru' ? 'en' : 'ru')}>{lang === 'ru' ? 'EN' : 'RU'}</button>
-      {stage === 'welcome' && <Welcome t={t} lang={lang} onEnter={enter} />}
-      {stage === 'login' && <Login t={t} onDone={logged} />}
-      {stage === 'app' && me && (
-        <div className="app">
-          <header>
-            <h2>Anna <em>&amp;</em> Nazar</h2>
-            <nav>
-              <button className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>{t.chat}</button>
-              <button className={tab === 'photos' ? 'on' : ''} onClick={() => setTab('photos')}>{t.photos}</button>
-              <button onClick={logout}>{t.logout}</button>
-            </nav>
-          </header>
-          {tab === 'chat' ? <Chat t={t} me={me} /> : <Gallery t={t} />}
-        </div>
-      )}
-    </>
-  )
+import {useEffect,useState,useRef} from 'react'
+import {API,api,request,getToken,setToken} from './api'
+import './v2.css'
+const tabs=['Главная','Чат','Фото','Календарь','Воспоминания','Письма','Желания'],enTabs=['Home','Chat','Photos','Calendar','Memories','Letters','Wishes']
+const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+const localTime=v=>{const d=new Date(v);return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,16)}
+function Picture({id,full=false}){const [src,set]=useState('');useEffect(()=>{let alive=true,url;request(`/api/photos/${id}/${full?'full':'thumb'}`).then(r=>r.blob()).then(b=>{if(alive){url=URL.createObjectURL(b);set(url)}}).catch(()=>{});return()=>{alive=false;if(url)URL.revokeObjectURL(url)}},[id,full]);return src?<img src={src} alt="Наше фото"/>:<p>♡</p>}
+export default function App(){
+ const [lang,setLang]=useState(localStorage.getItem('lang')==='en'?'en':'ru'),[stage,setStage]=useState('welcome'),[me,setMe]=useState(null),[tab,setTab]=useState(0),[phrase,setPhrase]=useState(''),[visible,setVisible]=useState(0),[error,setError]=useState(''),[busy,setBusy]=useState(false),[online,setOnline]=useState(navigator.onLine),[items,setItems]=useState([]),[photos,setPhotos]=useState([]),[reactions,setReactions]=useState([]),[users,setUsers]=useState([]),[setting,setSetting]=useState(null),[events,setEvents]=useState([]),[form,setForm]=useState(null),[text,setText]=useState(''),[typing,setTyping]=useState(''),[ready,setReady]=useState(false),[opened,setOpened]=useState(null),[install,setInstall]=useState(null),[now,setNow]=useState(Date.now())
+ const socket=useRef(),lastTyping=useRef(0),end=useRef(),file=useRef();const T=(ru,en)=>lang==='ru'?ru:en;const err=e=>setError(e.message||String(e));const kinds={3:'events',4:'memories',6:'wishes'};const path=tab===1?'/api/messages':tab===2?'/api/photos':tab===5?'/api/letters':'/api/collections/'+kinds[tab]
+ const run=async fn=>{setBusy(true);setError('');try{await fn()}catch(e){err(e)}finally{setBusy(false)}}
+ async function load(){if(tab===0){const [s,e]=await Promise.all([api('/api/settings'),api('/api/collections/events')]);setSetting(s);setEvents(e)}else{const result=await api(path);setItems(result);if(tab===1||tab===2)setReactions(await api('/api/reactions'));if(tab===4)setPhotos(await api('/api/photos'));if(tab===5)setUsers(await api('/api/users'))}}
+ useEffect(()=>{localStorage.setItem('lang',lang);document.documentElement.lang=lang;setVisible(0);api('/api/phrase?lang='+lang).then(d=>setPhrase(d.text)).catch(()=>setPhrase(T('Ты — моя любовь.','You are my love.')))},[lang])
+ useEffect(()=>{setVisible(0);const id=setInterval(()=>setVisible(n=>Math.min(n+1,phrase.length)),45);return()=>clearInterval(id)},[phrase])
+ useEffect(()=>{if(getToken())api('/api/me').then(setMe).catch(err);const status=()=>setOnline(navigator.onLine),prompt=e=>{e.preventDefault();setInstall(e)};window.addEventListener('online',status);window.addEventListener('offline',status);window.addEventListener('beforeinstallprompt',prompt);if('serviceWorker'in navigator)navigator.serviceWorker.register(import.meta.env.BASE_URL+'sw.js').catch(()=>{});const clock=setInterval(()=>setNow(Date.now()),1000);return()=>{clearInterval(clock);window.removeEventListener('online',status);window.removeEventListener('offline',status);window.removeEventListener('beforeinstallprompt',prompt)}},[])
+ useEffect(()=>{if(stage!=='app'||!me||!online)return;setForm(null);setItems([]);load().catch(err);const timer=setInterval(()=>load().catch(err),15000);return()=>clearInterval(timer)},[tab,stage,me?.id,online])
+ useEffect(()=>{if(stage!=='app'||tab!==1||!me||!online)return;let stopped=false,timer,typingTimer;const connect=()=>{const s=new WebSocket(API.replace(/^http/,'ws')+'/ws');socket.current=s;s.onopen=()=>s.send(JSON.stringify({token:getToken()}));s.onmessage=e=>{const d=JSON.parse(e.data);if(d.type==='ready'){setReady(true);load().catch(err)}if(d.type==='refresh')load().catch(err);if(d.type==='typing'&&d.user_id!==me.id){setTyping(d.name);clearTimeout(typingTimer);typingTimer=setTimeout(()=>setTyping(''),2500)}};s.onclose=e=>{setReady(false);if(e.code===4401){setToken(null);location.reload()}else if(!stopped)timer=setTimeout(connect,3000)}};connect();return()=>{stopped=true;clearTimeout(timer);clearTimeout(typingTimer);setTyping('');socket.current?.close()}},[tab,stage,me?.id,online])
+ useEffect(()=>{if(tab===1)end.current?.scrollIntoView({behavior:'smooth'})},[items.length,tab])
+ function newForm(){setForm(tab===5?{title:'',body:'',recipient_id:users.find(u=>u.id!==me.id)?.id,opens_at:localTime(Date.now()+86400000)}:{title:'',body:'',day:today(),annual:false,photo_id:null,category:T('Свидания','Dates')})}
+ async function save(e){e.preventDefault();await run(async()=>{const body=tab===5?{...form,opens_at:new Date(form.opens_at).toISOString()}:form;await api(path+(form.id?'/'+form.id:''),{method:form.id?'PUT':'POST',json:body});setForm(null);await load()})}
+ async function remove(row){let question=T('Удалить? Это нельзя отменить.','Delete? This cannot be undone.');if(tab===2)question=T('Удалить фото? В воспоминаниях останется только текст.','Delete photo? Linked memories will keep their text.');if(tab===5)question=row.user_id===me.id&&!row.unlocked?T('Удалить письмо до доставки?','Delete this undelivered letter?'):T('Скрыть письмо только у себя?','Hide this letter for yourself?');if(!confirm(question))return;await run(async()=>{await api(path+'/'+row.id,{method:'DELETE'});await load()})}
+ async function edit(row){if(tab===1){const value=prompt(T('Текст сообщения','Message text'),row.text);if(value===null||!value.trim())return;await run(async()=>{await api(path+'/'+row.id,{method:'PATCH',json:{text:value}});await load()})}else setForm(tab===5?{...row,opens_at:localTime(row.opens_at)}:row)}
+ function reactBar(target,row){return <div className="reactions">{['❤️','🥰','😂','😍','🫂'].map(emoji=>{const rows=reactions.filter(r=>r.target===target&&r.target_id===row.id&&r.emoji===emoji);return <button type="button" disabled={busy} className={rows.some(r=>r.user_id===me.id)?'selected':''} key={emoji} onClick={()=>run(async()=>{await api(`/api/reactions/${target}/${row.id}`,{method:'POST',json:{emoji}});setReactions(await api('/api/reactions'))})}>{emoji} {rows.length||''}</button>})}</div>}
+ function actions(row){return <div className="actions">{row.user_id===me.id&&tab!==2&&!(tab===1&&row.deleted)&&!(tab===5&&row.unlocked)&&<button disabled={busy} onClick={()=>edit(row)}>{T('Изменить','Edit')}</button>}{((row.user_id===me.id&&!(tab===1&&row.deleted))||tab===5)&&<button disabled={busy} onClick={()=>remove(row)}>{tab===5&&(row.unlocked||row.user_id!==me.id)?T('Скрыть у меня','Hide for me'):T('Удалить','Delete')}</button>}</div>}
+ function field(name,title,type='text'){return <label>{title}<input required type={type} maxLength={name==='title'?200:80} value={form[name]||''} onChange={e=>setForm({...form,[name]:e.target.value})}/></label>}
+ const count=setting?Math.max(0,Math.floor((Date.parse(today()+'T00:00:00Z')-Date.parse(setting.first_meeting+'T00:00:00Z'))/86400000)):null
+ const nearest=events.map(e=>{let day=e.day;if(e.annual){const [y,m,d]=e.day.split('-').map(Number);const make=y=>`${y}-${String(m).padStart(2,'0')}-${String(Math.min(d,new Date(y,m,0).getDate())).padStart(2,'0')}`;let year=new Date().getFullYear();day=make(year);if(day<today())day=make(year+1)}return {...e,day}}).filter(e=>e.day>=today()).sort((a,b)=>a.day.localeCompare(b.day))[0]
+ return <><div className="bg"/><button className="lang" onClick={()=>setLang(lang==='ru'?'en':'ru')}>{lang==='ru'?'EN':'RU'}</button>{error&&<div className="notice" role="alert">{error}<button onClick={()=>setError('')}>×</button></div>}{!online?<main className="center"><div className="card"><h2>Anna & Nazar</h2><p>{T('Нет интернета. Подключитесь, чтобы открыть личные данные.','You are offline. Reconnect to access your private data.')}</p></div></main>:stage==='welcome'?<main className="center"><div className="card hero"><p className="eyebrow">{T('Наш маленький мир','Our little world')}</p><h1>Anna <em>&</em> Nazar</h1><p className="phrase">{phrase.slice(0,visible)}<i className="caret"/></p><button className="btn" onClick={()=>setStage(me?'app':'login')}>{T('Открыть наш мир','Open our world')}</button></div></main>:stage==='login'?<main className="center"><form className="card login" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{const d=await api('/api/login',{method:'POST',json:{login:f.get('login'),password:f.get('password')}});setToken(d.token);setMe(await api('/api/me'));setStage('app')})}}><h2>Anna & Nazar</h2><label>{T('Логин','Login')}<input name="login" required autoCapitalize="none" autoComplete="username"/></label><label>{T('Пароль','Password')}<input name="password" required type="password" autoComplete="current-password"/></label><button className="btn" disabled={busy}>{T('Войти','Sign in')}</button></form></main>:me&&<div className="app"><header><h2>Anna <em>&</em> Nazar</h2><button onClick={()=>{setToken(null);setMe(null);setStage('welcome');setItems([])}}>{T('Выйти','Log out')}</button></header><nav className="tabs">{(lang==='ru'?tabs:enTabs).map((name,i)=><button key={i} className={tab===i?'on':''} onClick={()=>{setTab(i);setForm(null)}}>{name}</button>)}</nav>
+ {tab===0&&<section className="stack"><div className="card hero home"><p>{T('С нашей первой встречи','Since our first meeting')}</p><div className="day-count">{count===null?'…':count}</div><h2>{T('дней нашей истории','days of our story')}</h2><p>{setting?.first_meeting}</p><label>{T('Дата первой встречи','First meeting date')}<input type="date" value={setting?.first_meeting||''} max={today()} onChange={e=>{const value=e.target.value;if(value)run(async()=>{await api('/api/settings',{method:'PUT',json:{first_meeting:value}});await load()})}}/></label></div><div className="card"><h2>{T('Ближайшее событие','Next event')}</h2><p>{nearest?nearest.title+' · '+nearest.day:T('Добавьте дату в календарь','Add a date to the calendar')}</p></div><div className="card"><h2>{T('Всегда рядом','Always with you')}</h2>{install?<button className="btn" onClick={async()=>{await install.prompt();setInstall(null)}}>{T('Установить приложение','Install app')}</button>:<p>{T('iPhone: Safari → Поделиться → На экран «Домой». Android: меню браузера → Установить приложение.','iPhone: Safari → Share → Add to Home Screen. Android: browser menu → Install app.')}</p>}</div></section>}
+ {tab===1&&<section className="card chat"><small>{ready?T('На связи ♥','Connected ♥'):T('Подключаемся…','Connecting…')}</small><div className="msgs">{items.map(m=><div key={m.id} className={'bubble '+(m.user_id===me.id?'mine':'theirs')}><small>{m.name} · {new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small><p>{m.deleted?T('Сообщение удалено','Message deleted'):m.text}</p>{m.edited&&!m.deleted&&<small>{T('изменено','edited')}</small>}{!m.deleted&&reactBar('messages',m)}{actions(m)}</div>)}<div ref={end}/></div><small className="typing">{typing?typing+T(' печатает…',' is typing…'):''}</small><form className="composer" onSubmit={e=>{e.preventDefault();if(ready&&text.trim()){socket.current.send(JSON.stringify({type:'message',text}));setText('')}}}><input maxLength={2000} value={text} placeholder={T('Напиши что-нибудь тёплое…','Write something sweet…')} onChange={e=>{setText(e.target.value);if(ready&&Date.now()-lastTyping.current>1000){socket.current.send(JSON.stringify({type:'typing'}));lastTyping.current=Date.now()}}}/><button className="btn" disabled={!ready||!text.trim()}>{T('Отправить','Send')}</button></form></section>}
+ {tab===2&&<section><form className="card uploader" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);if(!f.get('file')?.size)return;run(async()=>{await api('/api/photos',{method:'POST',body:f});file.current.value='';await load()})}}><input name="caption" maxLength={300} placeholder={T('Подпись','Caption')}/><input ref={file} type="file" name="file" required accept="image/*"/><button className="btn" disabled={busy}>{T('Добавить','Add')}</button></form><div className="grid">{items.map(p=><article key={p.id} className="tile"><button className="image-button" onClick={()=>setOpened(p)}><Picture id={p.id}/></button><div className="tile-body"><p>{p.caption}</p>{reactBar('photos',p)}{actions(p)}</div></article>)}</div>{opened&&<div className="lightbox" onClick={()=>setOpened(null)}><button className="close" aria-label="Close">×</button><Picture id={opened.id} full/><p>{opened.caption}</p></div>}</section>}
+ {tab>=3&&<section className="stack"><button className="btn" disabled={busy||(tab===5&&!users.some(u=>u.id!==me.id))} onClick={newForm}>+ {T('Добавить','Add')}</button>{form&&<form className="card record-form" onSubmit={save}>{field('title',T('Название','Title'))}{(tab===3||tab===4)&&field('day',T('Дата','Date'),'date')}{tab===3&&<label className="check"><input type="checkbox" checked={form.annual} onChange={e=>setForm({...form,annual:e.target.checked})}/>{T('Ежегодно','Every year')}</label>}{(tab===4||tab===5)&&<label>{T('Текст','Text')}<textarea required={tab===5} maxLength={tab===5?20000:10000} value={form.body||''} onChange={e=>setForm({...form,body:e.target.value})}/></label>}{tab===4&&<label>{T('Фото','Photo')}<select value={form.photo_id||''} onChange={e=>setForm({...form,photo_id:e.target.value?Number(e.target.value):null})}><option value="">{T('Без фото','No photo')}</option>{photos.map(p=><option key={p.id} value={p.id}>{p.caption||'#'+p.id}</option>)}</select></label>}{tab===6&&field('category',T('Категория','Category'))}{tab===5&&<><label>{T('Получатель','Recipient')}<select value={form.recipient_id||''} onChange={e=>setForm({...form,recipient_id:Number(e.target.value)})}>{users.filter(u=>u.id!==me.id).map(u=><option value={u.id} key={u.id}>{u.name}</option>)}</select></label>{field('opens_at',T('Время открытия (часовой пояс устройства)','Unlock time (device time zone)'),'datetime-local')}</>}<div className="actions"><button className="btn" disabled={busy}>{T('Сохранить','Save')}</button><button type="button" onClick={()=>setForm(null)}>{T('Отмена','Cancel')}</button></div></form>}{[...items].sort((a,b)=>tab===4?b.day.localeCompare(a.day):tab===3?a.day.localeCompare(b.day):tab===6?Number(a.done)-Number(b.done):0).map(row=><article key={row.id} className={'card record '+(row.done?'done':'')}><small>{row.name} · {row.day||row.category||new Date(row.opens_at).toLocaleString()}</small><h2>{tab===5?'✉ ':''}{row.title}</h2>{row.annual&&<small>↻ {T('Ежегодно','Every year')}</small>}{row.body&&<p className="pre">{row.body}</p>}{tab===5&&row.body===null&&<p>{T('До открытия: ','Unlocks in: ')}{Math.max(0,Math.floor((new Date(row.opens_at)-now)/1000))} {T('сек.','sec.')}</p>}{row.photo_id&&<div className="memory-photo"><Picture id={row.photo_id} full/></div>}{tab===6&&<label className="check"><input type="checkbox" checked={row.done} onChange={e=>{const done=e.target.checked;run(async()=>{await api('/api/wishes/'+row.id,{method:'PATCH',json:{done}});await load()})}}/>{T('Исполнили','Completed')}</label>}{actions(row)}</article>)}</section>}
+ {tab>0&&!items.length&&!form&&<p>{T('Пока ничего нет','Nothing here yet')}</p>}</div>}</>
 }
