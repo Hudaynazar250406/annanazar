@@ -4,6 +4,7 @@ import App from './App.jsx'
 import Notifications from './Notifications.jsx'
 import Recorder from './Recorder.jsx'
 import './styles.css'
+import './sections.css'
 import { installPhotoPicker } from './photoPicker.js'
 import { installMobileLayout } from './mobileLayout.js'
 const root=document.getElementById('root')
