@@ -1,0 +1,8 @@
+button.rec-btn[type=button]{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;transition:transform .15s,background .15s}
+button.rec-btn.hot[type=button]{transform:scale(1.35);background:linear-gradient(135deg,#ff9ec4,#8fc3f5)!important}
+.rec-float{position:fixed;inset:0;z-index:130;pointer-events:none}
+.rec-dim{position:absolute;inset:0;background:#39304744}
+.rec-card{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(max(12px,env(safe-area-inset-bottom)) + 86px);width:min(92vw,340px);background:#fff8fbf2;border-radius:28px;padding:16px;display:grid;gap:10px;justify-items:center;text-align:center;box-shadow:0 18px 60px #3a2a4a55}
+.rec-card .rec-actions button{pointer-events:auto}
+.rec-hints{display:flex;justify-content:space-between;width:100%;font-size:13px}
+.rec-toast{position:fixed;left:50%;bottom:calc(max(12px,env(safe-area-inset-bottom)) + 96px);transform:translateX(-50%);z-index:140;background:#43304cf0;color:#fff;padding:10px 16px;border-radius:16px;font-size:14px;max-width:88vw;text-align:center;pointer-events:none}
