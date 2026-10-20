@@ -1,1 +1,2 @@
 .app>.tabs button:nth-child(5),.app>.tabs button:nth-child(6){display:none!important}
+.home label:has(input[type="date"]){display:none!important}

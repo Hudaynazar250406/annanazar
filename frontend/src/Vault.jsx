@@ -1,6 +1,7 @@
 import {useEffect,useRef,useState} from 'react'
 import {createPortal} from 'react-dom'
 import {api,request} from './api'
+import {bio} from './native.js'
 import './vault.css'
 const ITERS=600000,LOCK_MS=60000,MIN_PASS=10
 const enc=new TextEncoder(),dec=new TextDecoder()
@@ -33,11 +34,11 @@ function Thumb({item,keyRef,track,onOpen}){
  return <button type="button" className="vault-thumb" onClick={()=>onOpen(item)}>{src?<img src={src} alt=""/>:<span>…</span>}</button>
 }
 export default function Vault({root}){
- const [open,setOpen]=useState(false),[meta,setMeta]=useState(undefined),[unlocked,setUnlocked]=useState(false),[items,setItems]=useState([]),[view,setView]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[pass,setPass]=useState(''),[pass2,setPass2]=useState(''),[used,setUsed]=useState({used:0,budget:0})
- const key=useRef(null),urls=useRef(new Set()),file=useRef(null)
+ const [open,setOpen]=useState(false),[meta,setMeta]=useState(undefined),[unlocked,setUnlocked]=useState(false),[items,setItems]=useState([]),[view,setView]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[pass,setPass]=useState(''),[pass2,setPass2]=useState(''),[used,setUsed]=useState({used:0,budget:0}),[bioAvail,setBioAvail]=useState(false),[bioSaved,setBioSaved]=useState(false)
+ const key=useRef(null),urls=useRef(new Set()),file=useRef(null),passRef=useRef('')
  function track(url){urls.current.add(url);return url}
  function lock(){
-  key.current=null;urls.current.forEach(u=>URL.revokeObjectURL(u));urls.current.clear()
+  key.current=null;passRef.current='';urls.current.forEach(u=>URL.revokeObjectURL(u));urls.current.clear()
   setUnlocked(false);setItems([]);setView(null);setPass('');setPass2('');setError('');setMeta(undefined);setOpen(false)
  }
  useEffect(()=>{
@@ -53,6 +54,8 @@ export default function Vault({root}){
   if(!open)return
   let alive=true
   api('/api/vault/meta').then(m=>{if(alive)setMeta(m)}).catch(e=>{if(alive)setError(e.message)})
+  bio.available().then(v=>{if(alive)setBioAvail(v)}).catch(()=>{})
+  bio.has().then(v=>{if(alive)setBioSaved(v)}).catch(()=>{})
   return()=>{alive=false}
  },[open])
  useEffect(()=>{
@@ -75,19 +78,33 @@ export default function Vault({root}){
    const salt=crypto.getRandomValues(new Uint8Array(16));const k=await derive(pass,salt,ITERS)
    const check=toB64(await seal(k,enc.encode('vault-ok'),'vault:check'))
    await api('/api/vault/meta',{method:'PUT',json:{salt:toB64(salt),iters:ITERS,check}})
-   key.current=k;setPass('');setPass2('');setMeta({exists:true});setUnlocked(true);await refresh()
+   key.current=k;passRef.current=pass;setPass('');setPass2('');setMeta({exists:true});setUnlocked(true);await refresh()
   }catch(err){setError(err.message)}finally{setBusy(false)}
  }
- async function unlockNow(e){
-  e.preventDefault();setError('');setBusy(true)
+ async function doUnlock(phrase,fromBio){
+  setError('');setBusy(true)
   try{
    if(meta.iters<300000||meta.iters>5000000)throw new Error('Некорректные параметры раздела')
-   const k=await derive(pass,fromB64(meta.salt),meta.iters)
+   const k=await derive(phrase,fromB64(meta.salt),meta.iters)
    const ok=dec.decode(await unseal(k,fromB64(meta.check),'vault:check'))
    if(ok!=='vault-ok')throw new Error('bad')
-   key.current=k;setPass('');setUnlocked(true);await refresh()
-  }catch{setError('Неверная фраза');await new Promise(res=>setTimeout(res,800))}finally{setBusy(false)}
+   key.current=k;passRef.current=phrase;setPass('');setUnlocked(true);await refresh()
+  }catch{
+   if(fromBio){await bio.disable();setBioSaved(false);setError('Сохранённая фраза больше не подходит. Введите её вручную.')}
+   else{setError('Неверная фраза');await new Promise(res=>setTimeout(res,800))}
+  }finally{setBusy(false)}
  }
+ async function unlockNow(e){e.preventDefault();await doUnlock(pass,false)}
+ async function unlockBio(){
+  setError('')
+  try{const phrase=await bio.unlock();if(!phrase){setBioSaved(false);setError('Сохранённой фразы нет. Введите её вручную.');return}await doUnlock(phrase,true)}
+  catch{setError('Биометрия не подтверждена')}
+ }
+ async function enableBio(){
+  try{await bio.enable(passRef.current);setBioSaved(true);setError('')}
+  catch{setError('Не удалось включить биометрию')}
+ }
+ async function disableBio(){await bio.disable();setBioSaved(false)}
  async function addFiles(e){
   const files=[...e.target.files];e.target.value='';if(!files.length)return
   setBusy(true);setError('')
@@ -115,7 +132,7 @@ export default function Vault({root}){
  async function wipe(){
   const answer=prompt('Все фото и парольная фраза раздела будут удалены. Введите СТЕРЕТЬ для подтверждения.')
   if(answer!=='СТЕРЕТЬ')return
-  try{await api('/api/vault',{method:'DELETE'});lock()}catch(err){setError(err.message)}
+  try{await api('/api/vault',{method:'DELETE'});await bio.disable();lock()}catch(err){setError(err.message)}
  }
  if(!open)return null
  return createPortal(<div className="vault-screen" role="dialog" aria-modal="true" aria-label="Закрытый раздел">
@@ -128,11 +145,12 @@ export default function Vault({root}){
    <button className="v primary" disabled={busy}>{busy?'Создаём…':'Создать'}</button>
   </form>}
   {meta&&meta.exists&&!unlocked&&<form className="vault-box" onSubmit={unlockNow}>
-   <input type="password" name="vault-secret" autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="Парольная фраза" value={pass} onChange={e=>setPass(e.target.value)} autoFocus/>
+   {bioSaved&&<button type="button" className="v primary" disabled={busy} onClick={unlockBio}>Открыть по биометрии</button>}
+   <input type="password" name="vault-secret" autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="Парольная фраза" value={pass} onChange={e=>setPass(e.target.value)} autoFocus={!bioSaved}/>
    <button className="v primary" disabled={busy||!pass}>{busy?'Проверяем…':'Открыть'}</button>
   </form>}
   {unlocked&&<>
-   <div className="vault-actions"><button type="button" className="v primary" disabled={busy} onClick={()=>file.current&&file.current.click()}>{busy?'Обработка…':'＋ Добавить фото'}</button><button type="button" className="v" onClick={lock}>Заблокировать</button></div>
+   <div className="vault-actions"><button type="button" className="v primary" disabled={busy} onClick={()=>file.current&&file.current.click()}>{busy?'Обработка…':'＋ Добавить фото'}</button><button type="button" className="v" onClick={lock}>Заблокировать</button>{bioAvail&&!bioSaved&&<button type="button" className="v" onClick={enableBio}>Включить вход по биометрии</button>}{bioSaved&&<button type="button" className="v" onClick={disableBio}>Выключить вход по биометрии</button>}</div>
    <input ref={file} type="file" accept="image/*" multiple hidden onChange={addFiles}/>
    <p className="vault-note">Занято {(used.used/1048576).toFixed(0)} из {(used.budget/1048576).toFixed(0)} МБ (общий лимит). Блокировка через минуту без действий.</p>
    <div className="vault-grid">{items.map(it=><Thumb key={it.id} item={it} keyRef={key} track={track} onOpen={show}/>)}</div>

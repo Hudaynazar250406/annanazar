@@ -6,7 +6,7 @@ permissions:
 jobs:
   apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,9 +21,21 @@ jobs:
           python-version: '3.12'
       - run: pip install 'Pillow>=11,<13'
       - run: python frontend/scripts/icons.py
+      - name: Use native app modules
+        working-directory: frontend
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          cp native/native.js src/native.js
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            cp native/NativeBridge.jsx src/NativeBridge.jsx
+            echo 'Native push is enabled'
+          else
+            echo '::warning::GOOGLE_SERVICES_JSON is not set; native push is disabled'
+          fi
       - name: Install web and Capacitor dependencies
         working-directory: frontend
-        run: npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+        run: npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/push-notifications@7 "@aparajita/capacitor-biometric-auth@>=8 <10" "@aparajita/capacitor-secure-storage@7.1.6"
       - name: Build web assets for the app
         working-directory: frontend
         env:
@@ -34,27 +46,90 @@ jobs:
       - name: Create Android project
         working-directory: frontend
         run: npx cap add android
-      - name: Add camera and microphone permissions
+      - name: Add Firebase configuration
+        working-directory: frontend
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+          fi
+      - name: Customize Android app
         working-directory: frontend
         run: |
           python3 - <<'PY'
           import pathlib
-          p = pathlib.Path('android/app/src/main/AndroidManifest.xml')
-          s = p.read_text(encoding='utf-8')
-          lines = [
-              '<uses-permission android:name="android.permission.CAMERA" />',
-              '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
-              '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
-              '<uses-feature android:name="android.hardware.camera" android:required="false" />',
-              '<uses-feature android:name="android.hardware.microphone" android:required="false" />',
-          ]
-          block = ''.join('    ' + x + '\n' for x in lines if x.split('"')[1] not in s)
-          assert '</manifest>' in s
-          p.write_text(s.replace('</manifest>', block + '</manifest>'), encoding='utf-8')
+          from PIL import Image, ImageDraw
+          root = pathlib.Path('android/app/src/main')
+          res = root / 'res'
+          manifest = root / 'AndroidManifest.xml'
+          s = manifest.read_text(encoding='utf-8')
+          perms = ['android.permission.CAMERA', 'android.permission.RECORD_AUDIO', 'android.permission.MODIFY_AUDIO_SETTINGS', 'android.permission.POST_NOTIFICATIONS']
+          features = ['android.hardware.camera', 'android.hardware.microphone']
+          block = ''
+          for name in perms:
+              if name not in s:
+                  block += '    <uses-permission android:name="%s" />\n' % name
+          for name in features:
+              if name not in s:
+                  block += '    <uses-feature android:name="%s" android:required="false" />\n' % name
+          assert '</manifest>' in s and '</application>' in s
+          meta = ''
+          if 'default_notification_icon' not in s:
+              meta = '        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_heart" />\n        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notification_accent" />\n'
+          s = s.replace('</application>', meta + '    </application>', 1)
+          s = s.replace('</manifest>', block + '</manifest>', 1)
+          manifest.write_text(s, encoding='utf-8')
+          src = Image.open('public/icon-512.png').convert('RGBA')
+          legacy = {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}
+          fore = {'mdpi': 108, 'hdpi': 162, 'xhdpi': 216, 'xxhdpi': 324, 'xxxhdpi': 432}
+          stat = {'mdpi': 24, 'hdpi': 36, 'xhdpi': 48, 'xxhdpi': 72, 'xxxhdpi': 96}
+          resample = Image.Resampling.LANCZOS
+          for density, size in legacy.items():
+              folder = res / ('mipmap-' + density)
+              folder.mkdir(parents=True, exist_ok=True)
+              img = src.resize((size, size), resample)
+              img.save(folder / 'ic_launcher.png')
+              mask = Image.new('L', (size, size), 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
+              rounded = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+              rounded.paste(img, (0, 0), mask)
+              rounded.save(folder / 'ic_launcher_round.png')
+              big = fore[density]
+              src.resize((big, big), resample).save(folder / 'ic_launcher_foreground.png')
+          heart = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
+          draw = ImageDraw.Draw(heart)
+          draw.ellipse((145, 150, 267, 272), fill=(255, 255, 255, 255))
+          draw.ellipse((245, 150, 367, 272), fill=(255, 255, 255, 255))
+          draw.polygon([(149, 231), (256, 350), (363, 231)], fill=(255, 255, 255, 255))
+          heart = heart.crop((120, 120, 392, 392))
+          for density, size in stat.items():
+              folder = res / ('drawable-' + density)
+              folder.mkdir(parents=True, exist_ok=True)
+              heart.resize((size, size), resample).save(folder / 'ic_stat_heart.png')
+          values = res / 'values'
+          values.mkdir(parents=True, exist_ok=True)
+          (values / 'ic_launcher_background.xml').write_text('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#FFD6E7</color>\n    <color name="notification_accent">#B75B87</color>\n</resources>\n', encoding='utf-8')
+          adaptive = '<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/ic_launcher_background"/>\n    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n</adaptive-icon>\n'
+          anydpi = res / 'mipmap-anydpi-v26'
+          anydpi.mkdir(parents=True, exist_ok=True)
+          (anydpi / 'ic_launcher.xml').write_text(adaptive, encoding='utf-8')
+          (anydpi / 'ic_launcher_round.xml').write_text(adaptive, encoding='utf-8')
           PY
       - name: Sync web assets into Android
         working-directory: frontend
         run: npx cap sync android
+      - name: Restore stable signing key
+        env:
+          PASS: ${{ secrets.SIGNING_PASSPHRASE }}
+        run: |
+          if [ -n "$PASS" ] && [ -f android-signing/debug.keystore.enc ]; then
+            mkdir -p ~/.android
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in android-signing/debug.keystore.enc -out ~/.android/debug.keystore -pass env:PASS
+            echo 'Using stable signing key'
+          else
+            echo '::warning::Stable signing key is not configured; using a temporary key'
+          fi
       - name: Build APK
         working-directory: frontend/android
         run: |
