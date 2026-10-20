@@ -1,0 +1,68 @@
+name: Android debug APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install 'Pillow>=11,<13'
+      - run: python frontend/scripts/icons.py
+      - name: Install web and Capacitor dependencies
+        working-directory: frontend
+        run: npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+      - name: Build web assets for the app
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          test -n "$VITE_API_URL" || (echo 'VITE_API_URL is empty' && exit 1)
+          npx vite build --base=./
+      - name: Create Android project
+        working-directory: frontend
+        run: npx cap add android
+      - name: Add camera and microphone permissions
+        working-directory: frontend
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text(encoding='utf-8')
+          lines = [
+              '<uses-permission android:name="android.permission.CAMERA" />',
+              '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
+              '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
+              '<uses-feature android:name="android.hardware.camera" android:required="false" />',
+              '<uses-feature android:name="android.hardware.microphone" android:required="false" />',
+          ]
+          block = ''.join('    ' + x + '\n' for x in lines if x.split('"')[1] not in s)
+          assert '</manifest>' in s
+          p.write_text(s.replace('</manifest>', block + '</manifest>'), encoding='utf-8')
+          PY
+      - name: Sync web assets into Android
+        working-directory: frontend
+        run: npx cap sync android
+      - name: Build APK
+        working-directory: frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: annanazar-debug-apk
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+          if-no-files-found: error

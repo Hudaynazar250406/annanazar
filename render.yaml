@@ -18,4 +18,4 @@ services:
       - key: ANNA_PASSWORD
         sync: false
       - key: FRONTEND_ORIGIN
-        value: https://hudaynazar250406.github.io
+        value: https://hudaynazar250406.github.io,https://localhost,capacitor://localhost
